@@ -1,14 +1,81 @@
+import schedule
+import time
+import requests
+from bs4 import BeautifulSoup
+from openai import OpenAI
 import lmstudio as lms
-SERVER_API_HOST = "localhost:1234"
-lms.configure_default_client(SERVER_API_HOST)
 
-def multiply(a: float, b: float) -> float:
-    """Given two numbers a and b. Returns the product of them."""
-    return a * b
 
-model = lms.llm("qwen2.5-7b-instruct")
-model.act(
-  "What is the result of 12345 multiplied by 54321?",
-  [multiply],
-  on_message=print,
-)
+NEWS_URL = "https://www.malagahoy.es/malaga/"
+headers = {"User-Agent": "Mozilla/5.0"}
+
+def fetch_latest_articles():
+    try:
+        resp = requests.get(NEWS_URL, headers=headers)
+        resp.raise_for_status()  # ensure successful response
+        soup = BeautifulSoup(resp.text, "html.parser")
+        # Example: find all article links in the main list (may need to adjust selector)
+        articles = []
+        for link in soup.select("a[href*='/malaga/']"):  # find anchors in Málaga section
+            href = link.get('href')
+            title = link.get_text(strip=True)
+            if href and title:
+                articles.append((title, href))
+        return articles
+    except requests.RequestException as e:
+        print(f"Error fetching articles: {e}")
+        return []
+
+
+# Configure the OpenAI-compatible client to use local LM Studio server
+client =  OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
+
+def summarize_with_emojis(article_text):
+    system_prompt = (
+        "You are a helpful assistant. Summarize the following Spanish news article "
+        "in 2-3 sentences in English. End the summary with 1-3 emojis that match the tone of the news."
+    )
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": article_text}
+    ]
+    
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",  # replace with your loaded model
+        messages=messages,
+        temperature=0.7
+    )
+    summary = response.choices[0].message.content
+    return summary
+
+
+
+BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+CHAT_ID = "YOUR_CHAT_ID"
+
+def post_to_telegram(message_text):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    params = {"chat_id": CHAT_ID, "text": message_text}
+    try:
+        resp = requests.get(url, params=params)
+        print(f"Telegram response: {resp.json()}")
+    except requests.RequestException as e:
+        print(f"Failed to send message: {e}")
+
+
+
+def job():
+    # Fetch, summarize, and post logic here
+    new_articles = fetch_latest_articles()
+    for title, href in new_articles:
+        # Suppose we detect this is new (not seen before)
+        resp = requests.get(href, headers=headers)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        article_text = soup.find("div", {"class": "article-text"}).get_text()
+        summary = summarize_with_emojis(article_text)
+        post_to_telegram(f"{title}\n\n{summary}")
+
+schedule.every(10).minutes.do(job)
+while True:
+    schedule.run_pending()
+    time.sleep(1)
