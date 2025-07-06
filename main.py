@@ -41,7 +41,7 @@ def summarize_with_emojis(article_text):
     ]
     
     response = client.chat.completions.create(
-        model="gpt-4o-mini",  # replace with your loaded model
+        model="qwen3-4b",  
         messages=messages,
         temperature=0.7
     )
@@ -68,13 +68,33 @@ def job():
     # Fetch, summarize, and post logic here
     new_articles = fetch_latest_articles()
     for title, href in new_articles:
+        if(title == "Málaga"):
+            continue
         # Suppose we detect this is new (not seen before)
         resp = requests.get(href, headers=headers)
         soup = BeautifulSoup(resp.text, "html.parser")
+
+
+        # Extract the title of the article
+        title = soup.find('h1').get_text(strip=True)  # Assuming the title is in an <h1> tag
+
+        # Extract the date of the article
+        date = soup.find('time').get_text(strip=True)  # Assuming the date is in a <time> tag
+
+        # Extract the main content of the article
+        content = []
+        for paragraph in soup.find_all('p'):
+            content.append(paragraph.get_text(strip=True))
+
+        # Join the content paragraphs into a single string
+        main_content = '\n'.join(content)
+
+
         article_text = soup.find("div", {"class": "article-text"}).get_text()
         summary = summarize_with_emojis(article_text)
         post_to_telegram(f"{title}\n\n{summary}")
 
+job()  # Run once immediately
 schedule.every(10).minutes.do(job)
 while True:
     schedule.run_pending()
