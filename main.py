@@ -8,6 +8,9 @@ import requests
 import re
 import lmstudio as lms
 import os
+import json
+from telegram import Bot, InputMediaPhoto
+from telegram.constants import ParseMode
 
 
 headers = {"User-Agent": "Mozilla/5.0"}
@@ -53,17 +56,37 @@ def summarize_with_emojis(article_text):
         temperature=0.7
     )
     summary = response.choices[0].message.content
-    return summary
+    final_summary = re.sub(r'<think>.*?</think>', '', summary, flags=re.DOTALL).strip()
+    return final_summary
 
 
 
-def post_to_telegram(message_text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    params = {"chat_id": CHAT_ID, "text": message_text}
-    try:
+def post_to_telegram(message_text, images, href):
+    message_text = message_text + f"\n\n{href}"
+    if images:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMediaGroup"
+        mediaGroup = [
+            {'type': 'photo',
+            'media': images[0],
+            'caption': message_text,
+            'parse_mode': 'HTML'}
+        ]
+        if len(images) > 1:
+            for image in images[1:]:
+                mediaGroup.append({'type': 'photo', 'media': image})
+        payload = {
+            "chat_id": CHAT_ID,
+            "media": mediaGroup
+        }
+        resp = requests.post(url, json=payload)
+        print(f"Telegram response: {resp.json()}")
+    else:
+        # If no images, send as a text message
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        params = {"chat_id": CHAT_ID, "text": message_text}
+
         resp = requests.get(url, params=params)
         print(f"Telegram response: {resp.json()}")
-    except requests.RequestException as e:
         print(f"Failed to send message: {e}")
 
 def fetch_and_summarize(title, href):
@@ -94,7 +117,7 @@ def fetch_and_summarize(title, href):
     'noviembre': '11',
     'diciembre': '12'
 }
-    date_string = date_time_obj.text.strip()
+    date_string = date_time_obj.text.strip().split('\n')[0]
     # Replace the Spanish month name with its corresponding number
     for month_name, month_number in month_mapping.items():
         if month_name in date_string:
@@ -108,7 +131,11 @@ def fetch_and_summarize(title, href):
         content.append(paragraph.get_text(strip=True))
 
     # Extract image URLs from <source> tags
-    source_images = [source['srcset'] for source in soup.find_all('source')]
+    main_colleft= soup.find('main', id ='content-body')
+    source_images = [
+        source['srcset'] for source in main_colleft.find_all('source')
+        if not source.find_parent(class_='media-atom') 
+        ]
 
     # Extract image URL from <img> tag
     img_tag = soup.find('img')
@@ -130,18 +157,21 @@ def fetch_and_summarize(title, href):
     unique_urls = set(all_images) 
     filtered_urls = [url for url in unique_urls if url.endswith('.jpg') and f'_{max_resolution}w_' in url] # type: ignore
     # Join the content paragraphs into a single string
-    return '\n'.join(content)
+    return '\n'.join(content), filtered_urls, date_time
 
 def job():
     load_dotenv()
     # Fetch, summarize, and post logic here
     new_articles = fetch_latest_articles()
     for title, href in new_articles:
-        main_content = fetch_and_summarize(title, href)
-        if not main_content:
+        result = fetch_and_summarize(title, href)
+        if not result:
+            continue
+        main_content, images, date_time = result
+        if not main_content or not date_time:
             continue
         summary = summarize_with_emojis(main_content)
-        post_to_telegram(f"{title}\n\n{summary}")
+        post_to_telegram(f"<b>{title}</b>\n\n{summary}", images, href)
 
 job()  # Run once immediately
 schedule.every(10).minutes.do(job)
