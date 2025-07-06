@@ -1,13 +1,20 @@
+from bs4 import BeautifulSoup
+from openai import OpenAI
+from datetime import datetime
+from dotenv import load_dotenv
 import schedule
 import time
 import requests
-from bs4 import BeautifulSoup
-from openai import OpenAI
+import re
 import lmstudio as lms
+import os
 
 
-NEWS_URL = "https://www.malagahoy.es/malaga/"
 headers = {"User-Agent": "Mozilla/5.0"}
+
+BOT_TOKEN = os.getenv('BOT_TOKEN')
+CHAT_ID = os.getenv('CHAT_ID')
+NEWS_URL = os.getenv('NEWS_URL')
 
 def fetch_latest_articles():
     try:
@@ -28,18 +35,18 @@ def fetch_latest_articles():
 
 
 # Configure the OpenAI-compatible client to use local LM Studio server
-client =  OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
+
 
 def summarize_with_emojis(article_text):
     system_prompt = (
         "You are a helpful assistant. Summarize the following Spanish news article "
-        "in 2-3 sentences in English. End the summary with 1-3 emojis that match the tone of the news."
+        "in 2-3 sentences in English with a slightly sarcastic style. End the summary with 1-3 emojis that match the tone of the news."
     )
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": article_text}
     ]
-    
+    client =  OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
     response = client.chat.completions.create(
         model="qwen3-4b",  
         messages=messages,
@@ -50,9 +57,6 @@ def summarize_with_emojis(article_text):
 
 
 
-BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-CHAT_ID = "YOUR_CHAT_ID"
-
 def post_to_telegram(message_text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     params = {"chat_id": CHAT_ID, "text": message_text}
@@ -62,36 +66,81 @@ def post_to_telegram(message_text):
     except requests.RequestException as e:
         print(f"Failed to send message: {e}")
 
+def fetch_and_summarize(title, href):
+    if(title == "Málaga"):
+            return
+        # Suppose we detect this is new (not seen before)
+    resp = requests.get(href, headers=headers)
 
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    # Extract the title of the article
+    title = soup.find('h1').get_text(strip=True)  # Assuming the title is in an <h1> tag
+    # Extract the date of the article
+    date_time_obj =  soup.find('p', class_='timestamp-atom') # Assuming the title is in an <h1> tag    
+    # Convert to datetime object
+
+    month_mapping = {
+    'enero': '01',
+    'febrero': '02',
+    'marzo': '03',
+    'abril': '04',
+    'mayo': '05',
+    'junio': '06',
+    'julio': '07',
+    'agosto': '08',
+    'septiembre': '09',
+    'octubre': '10',
+    'noviembre': '11',
+    'diciembre': '12'
+}
+    date_string = date_time_obj.text.strip()
+    # Replace the Spanish month name with its corresponding number
+    for month_name, month_number in month_mapping.items():
+        if month_name in date_string:
+            date_string = date_string.replace(month_name, month_number)
+            break  # Exit the loop once the month is found and replaced
+
+    date_time = datetime.strptime(date_string, '%d de %m %Y - %H:%M')
+    # Extract the main content of the article
+    content = []
+    for paragraph in soup.find_all('p'):
+        content.append(paragraph.get_text(strip=True))
+
+    # Extract image URLs from <source> tags
+    source_images = [source['srcset'] for source in soup.find_all('source')]
+
+    # Extract image URL from <img> tag
+    img_tag = soup.find('img')
+    img_url = img_tag['src'] if img_tag else None
+
+    # Combine all image URLs
+    all_images = source_images + [img_url] if img_url else source_images
+
+    max_resolution = 0
+
+    for url in all_images:
+        match = re.search(r'_(\d+)w_', url) # type: ignore
+        if match:
+            resolution = int(match.group(1))
+            if resolution > max_resolution:
+                max_resolution = resolution
+
+    # Step 2: Filter URLs with the maximum resolution and .jpg extension
+    unique_urls = set(all_images) 
+    filtered_urls = [url for url in unique_urls if url.endswith('.jpg') and f'_{max_resolution}w_' in url] # type: ignore
+    # Join the content paragraphs into a single string
+    return '\n'.join(content)
 
 def job():
+    load_dotenv()
     # Fetch, summarize, and post logic here
     new_articles = fetch_latest_articles()
     for title, href in new_articles:
-        if(title == "Málaga"):
+        main_content = fetch_and_summarize(title, href)
+        if not main_content:
             continue
-        # Suppose we detect this is new (not seen before)
-        resp = requests.get(href, headers=headers)
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-
-        # Extract the title of the article
-        title = soup.find('h1').get_text(strip=True)  # Assuming the title is in an <h1> tag
-
-        # Extract the date of the article
-        date = soup.find('time').get_text(strip=True)  # Assuming the date is in a <time> tag
-
-        # Extract the main content of the article
-        content = []
-        for paragraph in soup.find_all('p'):
-            content.append(paragraph.get_text(strip=True))
-
-        # Join the content paragraphs into a single string
-        main_content = '\n'.join(content)
-
-
-        article_text = soup.find("div", {"class": "article-text"}).get_text()
-        summary = summarize_with_emojis(article_text)
+        summary = summarize_with_emojis(main_content)
         post_to_telegram(f"{title}\n\n{summary}")
 
 job()  # Run once immediately
