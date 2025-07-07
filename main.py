@@ -11,6 +11,7 @@ import chromadb
 from chromadb.config import Settings
 import uuid
 from datetime import timedelta
+import statistics # Added for median calculation
 
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 CHROMA_DB_PATH = "./chroma_db_persistence"
@@ -60,20 +61,44 @@ def summarize_with_emojis(article_text):
     system_prompt = (
         "You are a helpful assistant. Summarize the following Spanish news article "
         "in 2-3 sentences in English with a slightly sarcastic style. End the summary with 1-3 emojis that match the tone of the news."
+        "After the summary and emojis, provide an evaluation of the article on three dimensions, each on a scale of 1 to 10. "
+        "Use the format: Scores: E:X M:Y P:Z where X is 'expat impact', Y is 'Malaga capital relevance', and Z is 'political vs. new feature' (1 for internal politics, 10 for cool new stuff)."
+        "Example: Summary of the article... 🤔 Scores: E:7 M:9 P:4"
     )
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": article_text}
     ]
-    client =  OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
+    client =  OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio") # Ensure OpenAI client is configured
     response = client.chat.completions.create(
-        model="qwen3-4b",  
+        model="qwen3-4b",  # Ensure this model is appropriate and available
         messages=messages,
         temperature=0.7
     )
-    summary = response.choices[0].message.content
-    final_summary = re.sub(r'<think>.*?</think>', '', summary, flags=re.DOTALL).strip()
-    return final_summary
+    full_response_text = response.choices[0].message.content
+
+    # Remove any <think> tags
+    cleaned_response_text = re.sub(r'<think>.*?</think>', '', full_response_text, flags=re.DOTALL).strip()
+
+    # Attempt to parse scores
+    scores = {"expat_impact": None, "malaga_relevance": None, "feature_vs_politics": None}
+    scores_match = re.search(r"Scores:\s*E:(\d{1,2})\s*M:(\d{1,2})\s*P:(\d{1,2})", cleaned_response_text, re.IGNORECASE)
+
+    summary_text = cleaned_response_text
+    if scores_match:
+        try:
+            scores["expat_impact"] = int(scores_match.group(1))
+            scores["malaga_relevance"] = int(scores_match.group(2))
+            scores["feature_vs_politics"] = int(scores_match.group(3))
+            # Remove score string from summary
+            summary_text = re.sub(r"Scores:\s*E:\d{1,2}\s*M:\d{1,2}\s*P:\d{1,2}", "", cleaned_response_text, flags=re.IGNORECASE).strip()
+        except ValueError:
+            print(f"Warning: Could not parse scores from AI response: {scores_match.groups()}")
+            # Keep summary_text as cleaned_response_text if scores can't be parsed, so we don't lose the text
+    else:
+        print(f"Warning: Scores pattern not found in AI response: '{cleaned_response_text}'")
+
+    return summary_text, scores
 
 def post_to_telegram(message_text, images, href):
     message_text = message_text + f"\n\n{href}"
@@ -189,10 +214,49 @@ def job():
         if not is_new_article(title):
             print(f"Article '{title}' already processed, skipping.")
             continue
-        summary = summarize_with_emojis(main_content)
-        result_of_post = post_to_telegram(f"<b>{title}</b>\n\n{summary}", images, href)
-        if not result_of_post:
-            print(f"Failed to post article '{title}' to Telegram.")
+
+        summary, scores = summarize_with_emojis(main_content)
+
+        if not all(isinstance(score, int) for score in scores.values()):
+            print(f"Article '{title}' skipped due to missing or invalid scores: {scores}")
+            continue
+
+        # Calculate median score
+        score_values = [scores["expat_impact"], scores["malaga_relevance"], scores["feature_vs_politics"]]
+        try:
+            median_score = statistics.median(score_values)
+        except statistics.StatisticsError:
+            print(f"Article '{title}' skipped due to error in median calculation for scores: {score_values}")
+            continue
+
+        print(f"Article '{title}' scores: E:{scores['expat_impact']}, M:{scores['malaga_relevance']}, P:{scores['feature_vs_politics']}. Median: {median_score}")
+
+        if median_score > 5:
+            result_of_post = post_to_telegram(f"<b>{title}</b>\n\n{summary}", images, href)
+            if not result_of_post:
+                print(f"Failed to post article '{title}' to Telegram.")
+            else:
+                print(f"Article '{title}' posted to Telegram. Median score: {median_score}")
+        else:
+            print(f"Article '{title}' skipped due to median score ({median_score}) not exceeding 5.")
+            # Even if skipped for Telegram, we should mark it as processed in DB
+            # to avoid reprocessing if scoring criteria changes later or for other reasons.
+            # However, the current logic adds to DB only after successful post.
+            # For now, let's keep it this way, but it's a point for future consideration
+            # if we want to track all evaluated articles, not just posted ones.
+            # For this task, we only post if median > 5, so adding to DB only then is fine.
+            continue # Skip adding to DB if not posted
+
+        # The following DB add operation will only be reached if median > 5 and post was attempted (success/failure handled above)
+        # If post_to_telegram was successful or if it failed but we still want to record it (current logic doesn't distinguish well here for DB add)
+        # Let's adjust to add to DB only on successful post, or if median was high enough but post failed
+        # The original logic was: if post_to_telegram returns true, then add to DB.
+        # We need to ensure 'continue' is used if we skip posting due to low median.
+        # The 'continue' above handles skipping DB add for low median scores.
+        # If result_of_post is False (posting failed), we also 'continue' before DB add.
+
+        if not result_of_post: # This check is now after the median logic
+            print(f"Failed to post article '{title}' to Telegram, skipping DB add.")
             continue
         try: 
             doc_id = str(uuid.uuid4())
