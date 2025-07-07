@@ -6,22 +6,27 @@ import schedule
 import time
 import requests
 import re
-import lmstudio as lms
 import os
-import json
-from telegram import Bot, InputMediaPhoto
-from telegram.constants import ParseMode
+import chromadb
+from chromadb.config import Settings
+import uuid
+from datetime import timedelta
 
-
-headers = {"User-Agent": "Mozilla/5.0"}
+HEADERS = {"User-Agent": "Mozilla/5.0"}
+CHROMA_DB_PATH = "./chroma_db_persistence"
+SIMILARITY_THRESHOLD = 0.85  
+DISTANCE_THRESHOLD = 1 - SIMILARITY_THRESHOLD  
 
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 CHAT_ID = os.getenv('CHAT_ID')
 NEWS_URL = os.getenv('NEWS_URL')
 
+client = chromadb.PersistentClient(path=CHROMA_DB_PATH, settings=Settings())
+collection = client.get_or_create_collection(name="malaga_news")
+
 def fetch_latest_articles():
     try:
-        resp = requests.get(NEWS_URL, headers=headers)
+        resp = requests.get(NEWS_URL, headers=HEADERS)
         resp.raise_for_status()  # ensure successful response
         soup = BeautifulSoup(resp.text, "html.parser")
         # Example: find all article links in the main list (may need to adjust selector)
@@ -36,9 +41,19 @@ def fetch_latest_articles():
         print(f"Error fetching articles: {e}")
         return []
 
-
-# Configure the OpenAI-compatible client to use local LM Studio server
-
+def is_new_article(title):
+    try:
+        results = collection.query(query_texts=[title], n_results=1)
+        distances = results.get('distances', [])
+        if not distances or not distances[0]:
+            return True
+        distance = distances[0][0]
+        if distance <= DISTANCE_THRESHOLD:
+            return False
+        return True
+    except Exception as e:
+        print(f"Error checking for new article: {e}")
+        return True
 
 def summarize_with_emojis(article_text):
     system_prompt = (
@@ -59,8 +74,6 @@ def summarize_with_emojis(article_text):
     final_summary = re.sub(r'<think>.*?</think>', '', summary, flags=re.DOTALL).strip()
     return final_summary
 
-
-
 def post_to_telegram(message_text, images, href):
     message_text = message_text + f"\n\n{href}"
     if images:
@@ -80,6 +93,7 @@ def post_to_telegram(message_text, images, href):
         }
         resp = requests.post(url, json=payload)
         print(f"Telegram response: {resp.json()}")
+        return True
     else:
         # If no images, send as a text message
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -88,12 +102,13 @@ def post_to_telegram(message_text, images, href):
         resp = requests.get(url, params=params)
         print(f"Telegram response: {resp.json()}")
         print(f"Failed to send message: {e}")
+        return False
 
 def fetch_and_summarize(title, href):
     if(title == "Málaga"):
             return
         # Suppose we detect this is new (not seen before)
-    resp = requests.get(href, headers=headers)
+    resp = requests.get(href, headers=HEADERS)
 
     soup = BeautifulSoup(resp.text, "html.parser")
 
@@ -170,8 +185,52 @@ def job():
         main_content, images, date_time = result
         if not main_content or not date_time:
             continue
+        if not is_new_article(title):
+            print(f"Article '{title}' already processed, skipping.")
+            continue
         summary = summarize_with_emojis(main_content)
-        post_to_telegram(f"<b>{title}</b>\n\n{summary}", images, href)
+        result_of_post = post_to_telegram(f"<b>{title}</b>\n\n{summary}", images, href)
+        if not result_of_post:
+            print(f"Failed to post article '{title}' to Telegram.")
+            continue
+        try: 
+            doc_id = str(uuid.uuid4())
+            collection.add(
+                ids=[doc_id],
+                documents=[title],
+                metadatas=[{"date": date_time.isoformat()}]
+            )
+            print(f"Article '{title}' added to the database with ID {doc_id}.")
+        except Exception as e:
+            print(f"Error adding article '{title}' to the database: {e}")
+
+def cleanup_old_articles(max_age_days=10):
+    try:
+        results = collection.get(include=["metadatas", "ids"])
+        if not results or "metadatas" not in results or "ids" not in results:
+            print("No articles found in the database.")
+            return
+        ids_to_delete = []
+        now = datetime.now()
+        cutoff = now - timedelta(days=max_age_days)
+        for doc_id, metadata in zip(results['ids'], results['metadatas']):
+            timestamp_str = metadata.get("date")
+            if not timestamp_str:
+                continue
+            try:
+                timestamp = datetime.fromisoformat(timestamp_str)
+                if timestamp < cutoff:
+                    ids_to_delete.append(doc_id)
+            except ValueError:
+                continue
+        if ids_to_delete:
+            collection.delete(ids=ids_to_delete)
+            client.persist()
+            print(f"Deleted {len(ids_to_delete)} old articles from the database.")
+        else:
+            print("No old articles to delete.")
+    except Exception as e:
+        print(f"Error cleaning up old articles: {e}")
 
 job()  # Run once immediately
 schedule.every(10).minutes.do(job)
