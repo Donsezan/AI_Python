@@ -36,6 +36,7 @@ def fetch_latest_articles():
             title = link.get_text(strip=True)
             if href and title:
                 articles.append((title, href))
+        articles.reverse()  # Reverse to get the latest articles first
         return articles
     except requests.RequestException as e:
         print(f"Error fetching articles: {e}")
