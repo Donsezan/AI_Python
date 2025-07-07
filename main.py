@@ -85,7 +85,7 @@ def post_to_telegram(message_text, images, href):
             'parse_mode': 'HTML'}
         ]
         if len(images) > 1:
-            for image in images[1:]:
+            for image in images[1:9]:
                 mediaGroup.append({'type': 'photo', 'media': image})
         payload = {
             "chat_id": CHAT_ID,
@@ -203,6 +203,7 @@ def job():
             print(f"Article '{title}' added to the database with ID {doc_id}.")
         except Exception as e:
             print(f"Error adding article '{title}' to the database: {e}")
+    print(f"All done for {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 def cleanup_old_articles(max_age_days=10):
     try:
@@ -234,6 +235,7 @@ def cleanup_old_articles(max_age_days=10):
 
 job()  # Run once immediately
 schedule.every(10).minutes.do(job)
+schedule.every().day.at("00:00").do(cleanup_old_articles, max_age_days=10)  
 while True:
     schedule.run_pending()
     time.sleep(1)
