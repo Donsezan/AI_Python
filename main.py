@@ -75,6 +75,51 @@ def summarize_with_emojis(article_text):
     final_summary = re.sub(r'<think>.*?</think>', '', summary, flags=re.DOTALL).strip()
     return final_summary
 
+def summarize_with_emojis_and_evaluate(article_text):
+    system_prompt = (
+       "You are a helpful assistant. Summarize the following Spanish news article "
+        "in 2-3 sentences in English with a slightly sarcastic style. End the summary with 1-3 emojis that match the tone of the news."
+        "After the summary and emojis, provide an evaluation of the article on three dimensions, each on a scale of 1 to 10. "
+        "Use the format: Scores: E:X M:Y P:Z where X is 'expat impact', Y is 'Malaga capital relevance', and Z is 'political vs. new feature' (1 for internal politics, 10 for cool new stuff)."
+        "Example: Summary of the article... 🤔 Scores: E:7 M:9 P:4"
+    )
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": article_text}
+    ]
+    client =  OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
+    response = client.chat.completions.create(
+        model="qwen3-4b",  
+        messages=messages,
+        temperature=0.7
+    )
+    full_response_text = response.choices[0].message.content
+    # Remove any <think> tags
+    cleaned_response_text = re.sub(r'<think>.*?</think>', '', full_response_text, flags=re.DOTALL).strip()
+
+    # Attempt to parse scores
+    scores = {"expat_impact": 0, "malaga_relevance": 0, "feature_vs_politics": 0}
+    scores_match = re.search(r"Scores:\s*E:(\d{1,2})\s*M:(\d{1,2})\s*P:(\d{1,2})", cleaned_response_text, re.IGNORECASE)
+    
+    summary_text = cleaned_response_text
+    if scores_match:
+        try:
+            scores["expat_impact"] = int(scores_match.group(1))
+            scores["malaga_relevance"] = int(scores_match.group(2))
+            scores["feature_vs_politics"] = int(scores_match.group(3))
+            # Remove score string from summary
+            summary_text = re.sub(r"Scores:\s*E:\d{1,2}\s*M:\d{1,2}\s*P:\d{1,2}", "", cleaned_response_text, flags=re.IGNORECASE).strip()
+        except ValueError:
+            print(f"Warning: Could not parse scores from AI response: {scores_match.groups()}")
+            # Keep summary_text as cleaned_response_text if scores can't be parsed, so we don't lose the text
+    else:
+        print(f"Warning: Scores pattern not found in AI response: '{cleaned_response_text}'")
+    expat_impact = scores.get("expat_impact") or 0
+    malaga_relevance = scores.get("malaga_relevance") or 0
+    feature_vs_politics = scores.get("feature_vs_politics") or 0
+    final_score = (expat_impact + malaga_relevance + feature_vs_politics) / len(scores)
+    return summary_text, final_score   
+
 def post_to_telegram(message_text, images, href):
     message_text = message_text + f"\n\n{href}"
     if images:
@@ -206,6 +251,47 @@ def job():
             print(f"Error adding article '{title}' to the database: {e}")
     print(f"All done for {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
+def job_2():
+    load_dotenv()
+    # Fetch, summarize, and post logic here
+    new_articles = fetch_latest_articles()
+    for title, href in new_articles:
+        # 1. Check if the article is new
+        if not is_new_article(title):
+            print(f"Article '{title}' already processed, skipping.")
+            continue
+        # 2. Save the article title
+        try: 
+            doc_id = str(uuid.uuid4())
+            collection.add(
+                ids=[doc_id],
+                documents=[title],
+                metadatas=[{"date": date_time.isoformat()}]
+            )  
+            print(f"Article '{title}' added to the database with ID {doc_id}.")
+        except Exception as e:
+            print(f"Error adding article '{title}' to the database: {e}")
+
+        # 3. Fetch the article content and images
+        result = fetch_and_summarize(title, href)
+        if not result:
+            continue
+        main_content, images, date_time = result
+        if not main_content or not date_time:
+            continue
+        # 3.1 Evaluate post (should we post it or not)   
+        evaluated_content, evaluation_score  = summarize_with_emojis_and_evaluate(title, href)
+        if not evaluation_score:
+            print(f"Failed to evaluate article '{title}'. Skipping.")
+            continue
+        if evaluation_score < 5:
+            print(f"Article '{title}' does not meet the evaluation criteria. Skipping.")
+            continue
+        result_of_post = post_to_telegram(f"<b>{title}</b>\n\n{evaluated_content}", images, href)
+        if not result_of_post:
+            print(f"Failed to post article '{title}' to Telegram.")
+            continue
+
 def cleanup_old_articles(max_age_days=10):
     try:
         results = collection.get(include=["metadatas", "ids"])
@@ -234,9 +320,11 @@ def cleanup_old_articles(max_age_days=10):
     except Exception as e:
         print(f"Error cleaning up old articles: {e}")
 
-job()  # Run once immediately
+job_2()  # Run once immediately
+
 schedule.every(10).minutes.do(job)
 schedule.every().day.at("00:00").do(cleanup_old_articles, max_age_days=10)  
 while True:
     schedule.run_pending()
-    time.sleep(1)
+    time.sleep(1)  
+    print(f"All done for {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
