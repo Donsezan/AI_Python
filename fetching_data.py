@@ -54,14 +54,18 @@ class FetchingData:
         'noviembre': '11',
         'diciembre': '12'
     }
-        date_string = date_time_obj.text.strip().split('\n')[0]
+        date_string = date_time_obj.text.strip().split('\n')
+        if date_string.__len__() > 1:
+            date_string = date_string[1]
+        else:
+            date_string = date_string[0]
         # Replace the Spanish month name with its corresponding number
         for month_name, month_number in month_mapping.items():
             if month_name in date_string:
                 date_string = date_string.replace(month_name, month_number)
                 break  # Exit the loop once the month is found and replaced
-
-        date_time = datetime.strptime(date_string, '%d de %m %Y - %H:%M')
+        date_string = date_string.replace(" ", "")
+        date_time = datetime.strptime(date_string, '%dde%m%Y-%H:%M')
         # Extract the main content of the article
         content = []
         for paragraph in soup.find_all('p'):

@@ -57,9 +57,33 @@ def job():
             print(f"Failed to post article '{title}' to Telegram.")
             continue
 
+def dry_run():
+    # This function is for testing purposes, it will not post to Telegram
+    new_articles = fetch_serice.fetch_latest_articles()
+    for title, href in new_articles:
+        print(f"Title: {title}, Link: {href}")
+        result = fetch_serice.fetch_and_summarize(title, href)
+        if not result:
+            continue
+        main_content, images, date_time = result
+        if not main_content or not date_time:
+            continue
+        article_score = ai_service.evaluate_article(title)
+        if not article_score:
+            print(f"Failed to evaluate article '{title}'. Skipping.")
+            continue
+        if article_score < 5:
+            print(f"Article '{title}' with score '{article_score}' does not meet the evaluation criteria. Skipping.")
+            continue
+
+        # 3.1 Evaluate post (should we post it or not)   
+        evaluated_content = ai_service.summarize_with_emojis(main_content, target_language='en')
+        print(f"Evaluated Content: {evaluated_content}")
+
 
 # Main execution
-job()  # Run once immediately
+dry_run()  # Run dry run first to test without posting
+#job()  # Run once immediately
 
 schedule.every(10).minutes.do(job)
 schedule.every().day.at("00:00").do(data_service.cleanup_old_articles, max_age_days=10)  

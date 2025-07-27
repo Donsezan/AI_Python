@@ -1,5 +1,6 @@
 from openai import OpenAI
 import re
+import json
 
 class AIService:    
     def __init__(self):
@@ -15,21 +16,27 @@ class AIService:
             target_language = 'Russian'
         system_prompt = (
             "You are a helpful assistant. Summarize the following Spanish news article "
-            f"in 2-3 sentences in {target_language} with a slightly sarcastic style. End the summary with 1-3 emojis that match the tone of the news."
+            f"in 2-3 sentences in {target_language} with a slightly sarcastic or humorous style where it appropriate. End the summary with 1-3 emojis that match the tone of the news."
         )
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": article_text}
         ]
-        client =  OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
-        response = client.chat.completions.create(
-            model="qwen3-4b",  
-            messages=messages,
-            temperature=0.7
-        )
+        response = self.init_agent(messages)
         summary = response.choices[0].message.content
         final_summary = re.sub(r'<think>.*?</think>', '', summary, flags=re.DOTALL).strip()
         return final_summary
+
+    def init_agent(self, messages, response_format = {"type": "text"}):
+        client =  OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
+        response = client.chat.completions.create(
+            model="microsoft/phi-4-reasoning-plus",  
+            messages=messages,
+            response_format=response_format,
+            temperature=0.7
+        )
+        
+        return response
 
     def summarize_with_emojis_and_evaluate(self, article_text, target_language='en'):
         target_language = target_language.lower()
@@ -85,41 +92,85 @@ class AIService:
 
     def evaluate_article(self, article_text):
         system_prompt = (
-            "You are a helpful assistant. Evaluate the following Spanish news article "
-            "on three dimensions: expat impact, Malaga capital relevance, and political vs. new feature. "
-            "Provide scores on a scale of 1 to 10 for each dimension."
-            "Use the format: Scores: E:X M:Y P:Z where X is 'expat impact', Y is 'Malaga capital relevance', and Z is 'political vs. new feature' (1 for internal politics, 10 for cool new stuff)."
-            "Example: Scores: E:7 M:9 P:4"
-        )
+            "You are a news evaluation agent. Your role is to score local news stories based on how likely they are to interest a general audience, "
+            "especially international readers and expats in Malaga. " )
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "article_evaluation",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "expat_impact": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10,
+                            "description": "How relevant or impactful the news is for expatriates (1-10)"
+                        },
+                        "event_weight": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10,
+                            "description": "Significance or uniqueness of the event (1-10)"
+                        },
+                        "politics": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 10,
+                            "description": "Non-political/innovation score (0=political, 10=non-political/innovative)"
+                        },
+                        "timeliness": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10,
+                            "description": "Time-sensitivity or urgency (1-10)"
+                        },
+                        "practical_utility": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10,
+                            "description": "Usefulness for reader's daily life (1-10)"
+                        }
+                    },
+                    "required": ["expat_impact", "event_weight", "politics", "timeliness", "practical_utility"],
+                    "additionalProperties": False
+                }
+            }
+        }
+       
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": article_text}
         ]
-        client =  OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
-        response = client.chat.completions.create(
-            model="qwen3-4b",  
-            messages=messages,
-            temperature=0.8
-        )
+        response = self.init_agent(messages, response_format=response_format)
         full_response_text = response.choices[0].message.content
         # Remove any <think> tags
         cleaned_response_text = re.sub(r'<think>.*?</think>', '', full_response_text, flags=re.DOTALL).strip()
-         # Attempt to parse scores
-        scores = {"expat_impact": 0, "malaga_relevance": 0, "feature_vs_politics": 0}
-        scores_match = re.search(r"Scores:\s*E:(\d{1,2})\s*M:(\d{1,2})\s*P:(\d{1,2})", cleaned_response_text, re.IGNORECASE)
-        
-        if scores_match:
-            try:
-                scores["expat_impact"] = int(scores_match.group(1))
-                scores["malaga_relevance"] = int(scores_match.group(2))
-                scores["feature_vs_politics"] = int(scores_match.group(3))
-            except ValueError:
-                print(f"Warning: Could not parse scores from AI response: {scores_match.groups()}")
-                # Keep summary_text as cleaned_response_text if scores can't be parsed, so we don't lose the text
+        cleaned_response_text = re.sub(r'//.*', '', cleaned_response_text)
+        if "json" in cleaned_response_text:
+            cleaned_response_text = cleaned_response_text.strip('```json\n').strip('```').strip()
+            json_object = json.loads(cleaned_response_text)
+
         else:
-            print(f"Warning: Scores pattern not found in AI response: '{cleaned_response_text}'")
-        expat_impact = scores.get("expat_impact") or 0
-        malaga_relevance = scores.get("malaga_relevance") or 0
-        feature_vs_politics = scores.get("feature_vs_politics") or 0
-        final_score = (expat_impact + malaga_relevance + feature_vs_politics) / len(scores)
-        return final_score
+            json_object = json.loads(cleaned_response_text)
+
+        # Accessing the scores
+        expat_impact = json_object["expat_impact"]
+        event_weight = json_object["event_weight"]
+        politics_vs_innovation = json_object["politics"]
+        timeliness = json_object["timeliness"]
+        practical_utility = json_object["practical_utility"]
+
+        # Print the scores
+        print("Expat Impact:", expat_impact)
+        print("Event Weight:", event_weight)
+        print("Politics:", politics_vs_innovation)
+        print("Timeliness:", timeliness)
+        print("Practical Utility:", practical_utility)
+
+        # If you want to calculate a total score, for example:
+        scores = [expat_impact, event_weight, politics_vs_innovation, timeliness, practical_utility]
+        non_zero_scores = [score for score in scores if score != 0]
+        total_score = sum(non_zero_scores) / len(non_zero_scores) if non_zero_scores else 0
+        print("Average Score:", total_score)
+        return total_score
