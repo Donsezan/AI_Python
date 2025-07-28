@@ -81,7 +81,6 @@ def job(dry_run = False):
                 continue
     print("Job finished.")
 
-
 # Main execution
 if __name__ == "__main__":
     # Uncomment to test without posting
