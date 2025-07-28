@@ -1,12 +1,21 @@
 from openai import OpenAI
 import re
 import json
+from ai_provider import AIProvider
+from gemini_service import GeminiService
 
 class AIService:    
-    def __init__(self):
-        pass
+    def __init__(self, provider: AIProvider, gemini_api_key: str = None):
+        self.provider = provider
+        if self.provider == AIProvider.GEMINI:
+            if not gemini_api_key:
+                raise ValueError("Gemini API key is required for the Gemini provider")
+            self.gemini_service = GeminiService(api_key=gemini_api_key)
 
     def summarize_with_emojis(self, article_text, target_language='en'):
+        if self.provider == AIProvider.GEMINI:
+            return self.gemini_service.summarize_with_emojis(article_text, target_language)
+
         target_language = target_language.lower()
         if target_language == 'en':
             target_language = 'English B2 level'
@@ -28,6 +37,10 @@ class AIService:
         return final_summary
 
     def init_agent(self, messages, response_format = {"type": "text"}):
+        if self.provider == AIProvider.GEMINI:
+            # This method is specific to OpenAI, so we'll need to adapt it or bypass it for Gemini
+            raise NotImplementedError("init_agent is not implemented for the Gemini provider")
+
         client =  OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
         response = client.chat.completions.create(
             model="microsoft/phi-4-reasoning-plus",  
@@ -39,6 +52,9 @@ class AIService:
         return response
 
     def summarize_with_emojis_and_evaluate(self, article_text, target_language='en'):
+        if self.provider == AIProvider.GEMINI:
+            return self.gemini_service.summarize_with_emojis_and_evaluate(article_text, target_language)
+
         target_language = target_language.lower()
         if target_language == 'en':
             target_language = 'English'
@@ -64,10 +80,8 @@ class AIService:
             temperature=0.7
         )
         full_response_text = response.choices[0].message.content
-        # Remove any <think> tags
         cleaned_response_text = re.sub(r'<think>.*?</think>', '', full_response_text, flags=re.DOTALL).strip()
 
-        # Attempt to parse scores
         scores = {"expat_impact": 0, "malaga_relevance": 0, "feature_vs_politics": 0}
         scores_match = re.search(r"Scores:\s*E:(\d{1,2})\s*M:(\d{1,2})\s*P:(\d{1,2})", cleaned_response_text, re.IGNORECASE)
         
@@ -77,20 +91,22 @@ class AIService:
                 scores["expat_impact"] = int(scores_match.group(1))
                 scores["malaga_relevance"] = int(scores_match.group(2))
                 scores["feature_vs_politics"] = int(scores_match.group(3))
-                # Remove score string from summary
                 summary_text = re.sub(r"Scores:\s*E:\d{1,2}\s*M:\d{1,2}\s*P:\d{1,2}", "", cleaned_response_text, flags=re.IGNORECASE).strip()
             except ValueError:
                 print(f"Warning: Could not parse scores from AI response: {scores_match.groups()}")
-                # Keep summary_text as cleaned_response_text if scores can't be parsed, so we don't lose the text
         else:
             print(f"Warning: Scores pattern not found in AI response: '{cleaned_response_text}'")
-        expat_impact = scores.get("expat_impact") or 0
-        malaga_relevance = scores.get("malaga_relevance") or 0
-        feature_vs_politics = scores.get("feature_vs_politics") or 0
-        final_score = (expat_impact + malaga_relevance + feature_vs_politics) / len(scores)
+
+        expat_impact = scores.get("expat_impact", 0)
+        malaga_relevance = scores.get("malaga_relevance", 0)
+        feature_vs_politics = scores.get("feature_vs_politics", 0)
+        final_score = (expat_impact + malaga_relevance + feature_vs_politics) / len(scores) if scores else 0
         return summary_text, final_score   
 
     def evaluate_article(self, article_text):
+        if self.provider == AIProvider.GEMINI:
+            return self.gemini_service.evaluate_article(article_text)
+
         system_prompt = (
             "You are a news evaluation agent. Your role is to score local news stories based on how likely they are to interest a general audience, "
             "especially international readers and expats in Malaga. " )
@@ -144,33 +160,24 @@ class AIService:
         ]
         response = self.init_agent(messages, response_format=response_format)
         full_response_text = response.choices[0].message.content
-        # Remove any <think> tags
         cleaned_response_text = re.sub(r'<think>.*?</think>', '', full_response_text, flags=re.DOTALL).strip()
         cleaned_response_text = re.sub(r'//.*', '', cleaned_response_text)
+
         if "json" in cleaned_response_text:
             cleaned_response_text = cleaned_response_text.strip('```json\n').strip('```').strip()
+
+        try:
             json_object = json.loads(cleaned_response_text)
+            expat_impact = json_object.get("expat_impact", 0)
+            event_weight = json_object.get("event_weight", 0)
+            politics_vs_innovation = json_object.get("politics", 0)
+            timeliness = json_object.get("timeliness", 0)
+            practical_utility = json_object.get("practical_utility", 0)
 
-        else:
-            json_object = json.loads(cleaned_response_text)
-
-        # Accessing the scores
-        expat_impact = json_object["expat_impact"]
-        event_weight = json_object["event_weight"]
-        politics_vs_innovation = json_object["politics"]
-        timeliness = json_object["timeliness"]
-        practical_utility = json_object["practical_utility"]
-
-        # Print the scores
-        print("Expat Impact:", expat_impact)
-        print("Event Weight:", event_weight)
-        print("Politics:", politics_vs_innovation)
-        print("Timeliness:", timeliness)
-        print("Practical Utility:", practical_utility)
-
-        # If you want to calculate a total score, for example:
-        scores = [expat_impact, event_weight, politics_vs_innovation, timeliness, practical_utility]
-        non_zero_scores = [score for score in scores if score != 0]
-        total_score = sum(non_zero_scores) / len(non_zero_scores) if non_zero_scores else 0
-        print("Average Score:", total_score)
-        return total_score
+            scores = [expat_impact, event_weight, politics_vs_innovation, timeliness, practical_utility]
+            non_zero_scores = [score for score in scores if score != 0]
+            total_score = sum(non_zero_scores) / len(non_zero_scores) if non_zero_scores else 0
+            return total_score
+        except json.JSONDecodeError:
+            print(f"Failed to decode JSON from response: {cleaned_response_text}")
+            return 0
