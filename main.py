@@ -28,7 +28,7 @@ current_ai_provider = AIProvider.GEMINI
 data_service = DataService(chroma_db_path=CHROMA_DB_PATH, DISTANCE_THRESHOLD=DISTANCE_THRESHOLD)
 fetch_serice = FetchingData(NEWS_URL, HEADERS)
 telegram_service = TelegramService(BOT_TOKEN, CHAT_ID)
-ai_service = AIService(provider=current_ai_provider, gemini_api_key=GEMINI_API_KEY)
+ai_service = AIService.get_service(provider=current_ai_provider, gemini_api_key=GEMINI_API_KEY)
 
 def job():
     """
