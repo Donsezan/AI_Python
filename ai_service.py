@@ -1,6 +1,6 @@
 from ai_provider import AIProvider
-from openai_service import OpenAIService
-from gemini_service import GeminiService
+from ai.openai_service import OpenAIService
+from ai.gemini_service import GeminiService
 
 class AIService:
     @staticmethod

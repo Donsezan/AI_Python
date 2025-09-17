@@ -10,7 +10,6 @@ class DataService:
         self.client = chromadb.PersistentClient(path=chroma_db_path, settings=Settings())
         self.collection = self.client.get_or_create_collection(name="malaga_news")
 
-
     def is_new_article(self, title):
         try:
             results = self.collection.query(query_texts=[title], n_results=1)

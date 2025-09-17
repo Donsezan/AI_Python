@@ -6,8 +6,8 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from openai_service import OpenAIService
-from gemini_service import GeminiService
+from ai.openai_service import OpenAIService
+from ai.gemini_service import GeminiService
 import response_parser
 
 class TestOpenAIService(unittest.TestCase):
