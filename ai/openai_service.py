@@ -1,6 +1,6 @@
 from openai import OpenAI
-from base_ai_service import BaseAIService
-import ai_prompts
+from ai.base_ai_service import BaseAIService
+import ai.ai_prompts as ai_prompts
 import response_parser
 
 class OpenAIService(BaseAIService):
@@ -25,17 +25,6 @@ class OpenAIService(BaseAIService):
         response = self._init_agent(messages)
         summary = response.choices[0].message.content
         return response_parser.parse_summary_with_emojis(summary)
-
-    def summarize_with_emojis_and_evaluate(self, article_text, target_language='en'):
-        system_prompt = ai_prompts.get_summarize_with_emojis_and_evaluate_prompt(target_language)
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": article_text}
-        ]
-
-        response = self._init_agent(messages, model="qwen3-4b")
-        full_response_text = response.choices[0].message.content
-        return response_parser.parse_summary_with_emojis_and_evaluate(full_response_text)
 
     def evaluate_article(self, article_text):
         system_prompt = ai_prompts.get_evaluate_article_prompt()

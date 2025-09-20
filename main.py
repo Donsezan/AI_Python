@@ -5,10 +5,10 @@ import os
 from datetime import datetime
 
 from fetching_data import FetchingData
-from ai_service import AIService
+from ai.ai_service import AIService
 from telegram_service import TelegramService
 from data_service import DataService
-from ai_provider import AIProvider
+from ai.ai_provider import AIProvider
 
 # Configuration
 load_dotenv()
@@ -30,7 +30,7 @@ fetch_serice = FetchingData(NEWS_URL, HEADERS)
 telegram_service = TelegramService(BOT_TOKEN, CHAT_ID)
 ai_service = AIService.get_service(provider=current_ai_provider, gemini_api_key=GEMINI_API_KEY)
 
-def job():
+def job(dry_run = False):
     """
     This function fetches new articles, evaluates them, and posts them to Telegram if they meet the criteria.
     """
@@ -54,8 +54,10 @@ def job():
             print("Article content or date/time is missing.")
             continue
 
-        print("Saving article...")
-        data_service.save_article(title, date_time)
+        if dry_run == False:
+            print("Saving article...")
+            data_service.save_article(title, date_time)
+     
 
         print("Evaluating article...")
         article_score = ai_service.evaluate_article(title)
@@ -71,51 +73,25 @@ def job():
         print("Summarizing with emojis...")
         evaluated_content = ai_service.summarize_with_emojis(main_content, target_language='en')
 
-        print("Posting to Telegram...")
-        result_of_post = telegram_service.post_to_telegram(f"<b>{title}</b>\n\n{evaluated_content}", images, href)
-        if not result_of_post:
-            print(f"Failed to post article '{title}' to Telegram.")
-            continue
+        if dry_run == False:
+            print("Posting to Telegram...")
+            result_of_post = telegram_service.post_to_telegram(f"<b>{title}</b>\n\n{evaluated_content}", images, href)
+            if not result_of_post:
+                print(f"Failed to post article '{title}' to Telegram.")
+                continue
     print("Job finished.")
 
-def dry_run():
-    """
-    This function is for testing purposes. It fetches and evaluates articles without posting to Telegram.
-    """
-    new_articles = fetch_serice.fetch_latest_articles()
-    for title, href in new_articles:
-        print(f"Title: {title}, Link: {href}")
-
-        result = fetch_serice.fetch_and_summarize(title, href)
-        if not result:
-            continue
-
-        main_content, images, date_time = result
-        if not main_content or not date_time:
-            continue
-
-        article_score = ai_service.evaluate_article(title)
-        if not article_score:
-            print(f"Failed to evaluate article '{title}'. Skipping.")
-            continue
-
-        if article_score < 5:
-            print(f"Article '{title}' with score '{article_score}' does not meet the evaluation criteria. Skipping.")
-            continue
-
-        evaluated_content = ai_service.summarize_with_emojis(main_content, target_language='en')
-        print(f"Evaluated Content: {evaluated_content}")
 
 # Main execution
 if __name__ == "__main__":
-    # dry_run()  # Uncomment to test without posting
-    job()  # Run once immediately
+    # Uncomment to test without posting
+    job(dry_run = True)  # Run once immediately
 
-    # Schedule regular jobs
-    # schedule.every(10).minutes.do(job)
-    # schedule.every().day.at("00:00").do(data_service.cleanup_old_articles, max_age_days=10)
+    #Schedule regular jobs
+    schedule.every(10).minutes.do(job)
+    schedule.every().day.at("00:00").do(data_service.cleanup_old_articles, max_age_days=10)
 
-    # while True:
-    #     schedule.run_pending()
-    #     time.sleep(1)
-    #     print(f"All done for {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+        print(f"All done for {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")

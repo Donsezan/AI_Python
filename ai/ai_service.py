@@ -1,4 +1,4 @@
-from ai_provider import AIProvider
+from ai.ai_provider import AIProvider
 from ai.openai_service import OpenAIService
 from ai.gemini_service import GeminiService
 

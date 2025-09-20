@@ -18,17 +18,6 @@ class BaseAIService(ABC):
         pass
 
     @abstractmethod
-    def summarize_with_emojis_and_evaluate(self, article_text, target_language='en'):
-        """
-        Summarizes the article with emojis and provides an evaluation score.
-
-        :param article_text: The text of the article to summarize and evaluate.
-        :param target_language: The target language for the summary.
-        :return: A tuple containing the summary text and the evaluation score.
-        """
-        pass
-
-    @abstractmethod
     def evaluate_article(self, article_text):
         """
         Evaluates the article based on predefined criteria.

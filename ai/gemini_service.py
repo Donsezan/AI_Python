@@ -1,6 +1,6 @@
 import google.generativeai as genai
-from base_ai_service import BaseAIService
-import ai_prompts
+from ai.base_ai_service import BaseAIService
+import ai.ai_prompts as ai_prompts
 import response_parser
 
 class GeminiService(BaseAIService):
@@ -16,14 +16,6 @@ class GeminiService(BaseAIService):
         response = self.model.generate_content(full_prompt)
         summary = response.text
         return response_parser.parse_summary_with_emojis(summary)
-
-    def summarize_with_emojis_and_evaluate(self, article_text, target_language='en'):
-        prompt = ai_prompts.get_summarize_with_emojis_and_evaluate_prompt(target_language)
-        full_prompt = f"{prompt}\n\n{article_text}"
-
-        response = self.model.generate_content(full_prompt)
-        full_response_text = response.text
-        return response_parser.parse_summary_with_emojis_and_evaluate(full_response_text)
 
     def evaluate_article(self, article_text):
         prompt = ai_prompts.get_evaluate_article_prompt()    
@@ -46,8 +38,7 @@ class GeminiService(BaseAIService):
             }
         }
         full_prompt = (
-                    f"{prompt} Provide a JSON response with the following schema: {response_format}"
-                    
+                    f"{prompt} Provide a JSON response with the following schema: {response_format}"                    
                     f"\n\n{article_text}"
                 )
         response = self.model.generate_content(

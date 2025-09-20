@@ -32,21 +32,6 @@ class TestOpenAIService(unittest.TestCase):
         self.assertIn("Test article", call_args.kwargs['messages'][1]['content'])
 
     @patch('openai.OpenAI')
-    def test_summarize_with_emojis_and_evaluate(self, MockOpenAI):
-        mock_client = MockOpenAI.return_value
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "Test summary. 🤔 Scores: E:8 M:7 P:6"
-        mock_client.chat.completions.create.return_value = mock_response
-
-        self.service.client = mock_client
-        summary, score = self.service.summarize_with_emojis_and_evaluate("Test article")
-
-        self.assertEqual(summary.strip(), "Test summary. 🤔")
-        self.assertAlmostEqual(score, 7.0)
-        mock_client.chat.completions.create.assert_called_once()
-
-    @patch('openai.OpenAI')
     def test_evaluate_article(self, MockOpenAI):
         mock_client = MockOpenAI.return_value
         mock_response = MagicMock()
@@ -86,17 +71,6 @@ class TestGeminiService(unittest.TestCase):
         self.service.model.generate_content.assert_called_once()
         call_args = self.service.model.generate_content.call_args
         self.assertIn("Test article", call_args[0][0])
-
-    def test_summarize_with_emojis_and_evaluate(self):
-        mock_response = MagicMock()
-        mock_response.text = "Test summary. 🤔 Scores: E:8 M:7 P:6"
-        self.service.model.generate_content.return_value = mock_response
-
-        summary, score = self.service.summarize_with_emojis_and_evaluate("Test article")
-
-        self.assertEqual(summary.strip(), "Test summary. 🤔")
-        self.assertAlmostEqual(score, 7.0)
-        self.service.model.generate_content.assert_called_once()
 
     def test_evaluate_article(self):
         mock_response = MagicMock()
