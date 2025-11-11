@@ -81,17 +81,16 @@ def job(dry_run = False):
                 continue
     print("Job finished.")
 
-
 # Main execution
 if __name__ == "__main__":
     # Uncomment to test without posting
-    job(dry_run = True)  # Run once immediately
+    job(dry_run = False)  # Run once immediately
 
     #Schedule regular jobs
-    schedule.every(10).minutes.do(job)
+    schedule.every(10).minutes.do(lambda: job(dry_run=False))
     schedule.every().day.at("00:00").do(data_service.cleanup_old_articles, max_age_days=10)
 
     while True:
         schedule.run_pending()
-        time.sleep(1)
+        time.sleep(60)
         print(f"All done for {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
